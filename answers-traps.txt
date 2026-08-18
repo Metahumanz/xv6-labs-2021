@@ -1,0 +1,62 @@
+Question 1:
+Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+
+回答：
+RISC-V中函数的前8个参数依次通过a0~a7寄存器传递。
+在main调用printf时，第3个参数13存放在a2寄存器中。
+
+
+Question 2:
+Where is the call to function f in the assembly code for main? Where is the call to g? (Hint: the compiler may inline functions.)
+
+回答：
+汇编代码中没有真正调用f，也没有真正调用g。
+编译器进行了优化：g(x)被直接内联为x+3，而main中的f(8)+1在编译阶段就被计算为12，因此main直接通过li a1,12将结果装入a1寄存器。
+
+
+Question 3:
+At what address is the function printf located?
+
+回答：
+printf函数位于地址0x628。
+
+
+Question 4:
+What value is in the register ra just after the jalr to printf in main?
+
+回答：
+ra中的值为0x38。
+因为jalr在跳转到printf的同时，会把下一条指令的地址保存到ra中。调用printf的jalr位于0x34，下一条指令位于0x38，因此ra=0x38。
+
+
+Question 5:
+Run the following code. What is the output?
+
+unsigned int i = 0x00646c72;
+printf("H%x Wo%s", 57616, &i);
+
+The output depends on that fact that the RISC-V is little-endian. If the RISC-V were instead big-endian what would you set i to in order to yield the same output? Would you need to change 57616 to a different value?
+
+回答：
+输出为：
+
+He110 World
+
+57616的十六进制表示为0xe110，因此%x输出e110。
+
+RISC-V采用小端序，i=0x00646c72在内存中的字节排列为72 6c 64 00，对应ASCII字符串“rld”，因此%s最终得到“World”。
+
+如果改为大端序，为了使内存中的字节仍然排列为72 6c 64 00，应将i设置为0x726c6400。
+
+57616不需要修改，因为它是以数值形式传递给printf的，大小端序不会改变这个数值本身。
+
+
+Question 6:
+In the following code, what is going to be printed after 'y='? (note: the answer is not a specific value.) Why does this happen?
+
+printf("x=%d y=%d", 3);
+
+回答：
+y=后面的值是不确定的。
+
+格式字符串中有两个%d，因此printf会尝试读取两个整数参数。第一个整数3存放在a1中，但程序没有提供第二个整数参数，因此a2中没有一个有效的对应参数。printf仍然会把a2当前残留的内容（脏数据）当作第二个整数输出，所以结果是不确定的。
