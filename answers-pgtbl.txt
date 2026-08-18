@@ -1,0 +1,9 @@
+1. Which other xv6 system call(s) could be made faster using this shared page? Explain how.
+
+uptime()可以使用类似的方法加速。内核可以把当前的ticks值维护在用户只读的共享页中，用户程序直接读取该值，从而避免每次调用uptime()都陷入内核。其他需要修改系统状态或访问受保护资源的系统调用通常不能简单地使用这种方式。
+
+2. Explain the output of vmprint in terms of Fig 3-4 from the text.
+
+page 0主要包含init程序的代码和数据。page 1是保护页，其用户访问权限被清除，因此进程在用户态不能读取或写入该页。page 2是用户栈。
+
+页表最高地址附近还有特殊映射，其中倒数第三页是USYSCALL页，保存当前进程的PID，并以用户态只读方式映射；其后的两页分别是TRAPFRAME和TRAMPOLINE。
