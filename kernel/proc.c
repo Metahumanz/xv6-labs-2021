@@ -123,7 +123,10 @@ found:
   p->alarm_interval = 0;
   p->alarm_handler = 0;
   p->alarm_ticks = 0;
-  
+
+  p->alarm_handling = 0;
+  memset(&p->alarm_trapframe, 0, sizeof(p->alarm_trapframe));
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);

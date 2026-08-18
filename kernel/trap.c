@@ -80,15 +80,21 @@ usertrap(void)
   if(which_dev == 2)
     yield();
 
-  if(which_dev == 2 && p->alarm_interval > 0){
+  if(which_dev == 2 && p->alarm_interval > 0 && !p->alarm_handling){
     p->alarm_ticks++;
 
     if(p->alarm_ticks >= p->alarm_interval){
       p->alarm_ticks = 0;
+      p->alarm_handling = 1;
+
+      memmove(&p->alarm_trapframe,
+              p->trapframe,
+              sizeof(struct trapframe));
+
       p->trapframe->epc = p->alarm_handler;
     }
   }
-  
+
   usertrapret();
 }
 

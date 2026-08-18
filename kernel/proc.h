@@ -108,4 +108,7 @@ struct proc {
   int alarm_interval;       // 每隔多少tick触发一次
   uint64 alarm_handler;     // 用户handler地址
   int alarm_ticks;          // 已经过了多少tick
+
+  struct trapframe alarm_trapframe;   // 被alarm打断时的完整现场
+  int alarm_handling;                 // 当前是否正在执行handler
 };
