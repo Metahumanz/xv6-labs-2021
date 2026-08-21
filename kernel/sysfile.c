@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -488,7 +489,71 @@ sys_pipe(void)
 uint64
 sys_mmap(void)
 {
-  return -1;
+  uint64 addr, offset;
+  int length, prot, flags;
+  struct file *f;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &addr) < 0 ||
+     argint(1, &length) < 0 ||
+     argint(2, &prot) < 0 ||
+     argint(3, &flags) < 0 ||
+     argfd(4, 0, &f) < 0 ||
+     argaddr(5, &offset) < 0)
+    return -1;
+
+  if(addr != 0 || length <= 0 || offset != 0)
+    return -1;
+
+  if(f->type != FD_INODE || !f->readable)
+    return -1;
+
+  if(flags != MAP_SHARED && flags != MAP_PRIVATE)
+    return -1;
+
+  if((flags == MAP_SHARED) &&
+     (prot & PROT_WRITE) &&
+     !f->writable)
+    return -1;
+
+  struct vma *v = 0;
+
+  for(int i = 0; i < NVMA; i++){
+    if(!p->vmas[i].used){
+      v = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(v == 0)
+    return -1;
+
+  uint64 top = TRAPFRAME;
+
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].used && p->vmas[i].addr < top)
+      top = p->vmas[i].addr;
+  }
+
+  uint64 maplen = PGROUNDUP((uint64)length);
+
+  if(top < maplen)
+    return -1;
+
+  uint64 mapaddr = PGROUNDDOWN(top - maplen);
+
+  if(mapaddr < PGROUNDUP(p->sz))
+    return -1;
+
+  v->used = 1;
+  v->addr = mapaddr;
+  v->length = length;
+  v->prot = prot;
+  v->flags = flags;
+  v->file = filedup(f);
+  v->offset = offset;
+
+  return mapaddr;
 }
 
 uint64
