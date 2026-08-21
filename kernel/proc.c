@@ -120,6 +120,8 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  memset(p->vmas, 0, sizeof(p->vmas));
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -301,6 +303,14 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  // Copy mmap regions. The child can lazily fault its own pages in.
+  for(i = 0; i < NVMA; i++){
+    if(p->vmas[i].used){
+      np->vmas[i] = p->vmas[i];
+      np->vmas[i].file = filedup(p->vmas[i].file);
+    }
+  }
+  
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -344,6 +354,12 @@ exit(int status)
   if(p == initproc)
     panic("init exiting");
 
+  // Tear down every mmap region before the page table is freed.
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].used)
+      vmaunmap(p, p->vmas[i].addr, p->vmas[i].length);
+  }
+  
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
