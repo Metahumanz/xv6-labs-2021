@@ -556,8 +556,155 @@ sys_mmap(void)
   return mapaddr;
 }
 
+static int
+vmawriteback(struct proc *p, struct vma *v, uint64 start, uint64 end)
+{
+  // MAP_PRIVATE never writes changes back.
+  // A read-only MAP_SHARED mapping cannot have user modifications.
+  if(v->flags != MAP_SHARED || !(v->prot & PROT_WRITE))
+    return 0;
+
+  int err = 0;
+  int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+
+  for(uint64 a = start; a < end; a += PGSIZE){
+    // Lazy allocation: an untouched page may not exist at all.
+    if(walkaddr(p->pagetable, a) == 0)
+      continue;
+
+    uint64 fileoff = v->offset + (a - v->addr);
+    uint64 n = PGSIZE;
+
+    // Do not write beyond the requested mapping length.
+    uint64 realend = v->addr + v->length;
+    if(a + n > realend)
+      n = realend - a;
+
+    // Do not extend the file merely because the mapping
+    // covers space beyond the original EOF.
+    ilock(v->file->ip);
+    uint fsize = v->file->ip->size;
+    iunlock(v->file->ip);
+
+    if(fileoff >= fsize)
+      continue;
+
+    if(n > fsize - fileoff)
+      n = fsize - fileoff;
+
+    uint64 done = 0;
+
+    while(done < n){
+      int n1 = n - done;
+      if(n1 > max)
+        n1 = max;
+
+      begin_op();
+
+      ilock(v->file->ip);
+      int r = writei(v->file->ip, 1,
+                     a + done,
+                     fileoff + done,
+                     n1);
+      iunlock(v->file->ip);
+
+      end_op();
+
+      if(r != n1){
+        err = -1;
+        break;
+      }
+
+      done += r;
+    }
+
+    if(err < 0)
+      break;
+  }
+
+  return err;
+}
+
+int
+vmaunmap(struct proc *p, uint64 addr, uint64 length)
+{
+  if(length == 0 || addr % PGSIZE != 0)
+    return -1;
+
+  if(addr + length < addr)
+    return -1;
+
+  struct vma *v = 0;
+
+  for(int i = 0; i < NVMA; i++){
+    if(!p->vmas[i].used)
+      continue;
+
+    uint64 vend = p->vmas[i].addr +
+                  PGROUNDUP(p->vmas[i].length);
+
+    if(addr >= p->vmas[i].addr && addr < vend){
+      v = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(v == 0)
+    return -1;
+
+  uint64 vend = v->addr + PGROUNDUP(v->length);
+  uint64 end = PGROUNDUP(addr + length);
+
+  if(end <= addr || end > vend)
+    return -1;
+
+  // The lab only requires removing from the beginning,
+  // the end, or the whole VMA; not punching a hole in the middle.
+  if(addr != v->addr && end != vend)
+    return -1;
+
+  int err = vmawriteback(p, v, addr, end);
+
+  // Remove only pages that were actually faulted in.
+  // Untouched mmap pages have no PTE because allocation is lazy.
+  for(uint64 a = addr; a < end; a += PGSIZE){
+    if(walkaddr(p->pagetable, a) != 0)
+      uvmunmap(p->pagetable, a, 1, 1);
+  }
+
+  if(addr == v->addr && end == vend){
+    // Entire mapping disappears.
+    fileclose(v->file);
+    memset(v, 0, sizeof(*v));
+
+  } else if(addr == v->addr){
+    // Remove from the beginning.
+    uint64 removed = end - v->addr;
+
+    v->addr = end;
+    v->offset += removed;
+    v->length -= removed;
+
+  } else {
+    // Remove from the end.
+    v->length = addr - v->addr;
+  }
+
+  return err;
+}
+
 uint64
 sys_munmap(void)
 {
-  return -1;
+  uint64 addr;
+  int length;
+
+  if(argaddr(0, &addr) < 0 ||
+     argint(1, &length) < 0)
+    return -1;
+
+  if(length <= 0)
+    return -1;
+
+  return vmaunmap(myproc(), addr, (uint64)length);
 }
