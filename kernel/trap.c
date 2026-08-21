@@ -3,6 +3,10 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 #include "proc.h"
 #include "defs.h"
 
@@ -15,6 +19,75 @@ extern char trampoline[], uservec[], userret[];
 void kernelvec();
 
 extern int devintr();
+
+static int
+mmapfault(uint64 faultaddr, uint64 cause)
+{
+  struct proc *p = myproc();
+  uint64 va = PGROUNDDOWN(faultaddr);
+  struct vma *v = 0;
+
+  // Find the VMA containing the faulting address.
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].used &&
+       faultaddr >= p->vmas[i].addr &&
+       faultaddr < p->vmas[i].addr + p->vmas[i].length){
+      v = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(v == 0)
+    return -1;
+
+  // Check whether this type of access is permitted.
+  if(cause == 13 && !(v->prot & PROT_READ))
+    return -1;
+
+  if(cause == 15 && !(v->prot & PROT_WRITE))
+    return -1;
+
+  if(cause == 12 && !(v->prot & PROT_EXEC))
+    return -1;
+
+  char *mem = kalloc();
+  if(mem == 0)
+    return -1;
+
+  // The part of the last page beyond EOF must remain zero.
+  memset(mem, 0, PGSIZE);
+
+  uint64 fileoff = v->offset + (va - v->addr);
+
+  ilock(v->file->ip);
+  int n = readi(v->file->ip, 0, (uint64)mem,
+                fileoff, PGSIZE);
+  iunlock(v->file->ip);
+
+  if(n < 0){
+    kfree(mem);
+    return -1;
+  }
+
+  int perm = PTE_U;
+
+  if(v->prot & PROT_READ)
+    perm |= PTE_R;
+
+  if(v->prot & PROT_WRITE)
+    perm |= PTE_R | PTE_W;
+
+  if(v->prot & PROT_EXEC)
+    perm |= PTE_X;
+
+  if(mappages(p->pagetable, va, PGSIZE,
+              (uint64)mem, perm) != 0){
+    kfree(mem);
+    return -1;
+  }
+
+  return 0;
+}
 
 void
 trapinit(void)
@@ -56,20 +129,26 @@ usertrap(void)
     if(p->killed)
       exit(-1);
 
-    // sepc points to the ecall instruction,
-    // but we want to return to the next instruction.
     p->trapframe->epc += 4;
 
-    // an interrupt will change sstatus &c registers,
-    // so don't enable until done with those registers.
     intr_on();
 
     syscall();
+
+  } else if(r_scause() == 13 ||
+            r_scause() == 15 ||
+            r_scause() == 12){
+
+    if(mmapfault(r_stval(), r_scause()) < 0)
+      p->killed = 1;
+
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    printf("usertrap(): unexpected scause %p pid=%d\n",
+          r_scause(), p->pid);
+    printf("            sepc=%p stval=%p\n",
+          r_sepc(), r_stval());
     p->killed = 1;
   }
 
